@@ -62,17 +62,18 @@ def tiene_posicion(ticker):
 def webhook():
     logger.info(f"Webhook recibido: {datetime.now().strftime('%H:%M:%S')}")
 
-    secret = request.headers.get("X-Webhook-Secret", "")
-    if secret != WEBHOOK_SECRET:
-        logger.warning("Clave secreta incorrecta")
-        return jsonify({"error": "Unauthorized"}), 401
-
     try:
         data = request.get_json()
         if not data:
             return jsonify({"error": "No JSON"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+    # Verificar secret desde el body
+    secret = data.get("secret", "")
+    if WEBHOOK_SECRET and secret != WEBHOOK_SECRET:
+        logger.warning("Clave secreta incorrecta")
+        return jsonify({"error": "Unauthorized"}), 401
 
     ticker   = data.get("ticker",   "AMD")
     action   = data.get("action",   "").lower()
