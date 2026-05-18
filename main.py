@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import requests
 import os
 import logging
+import time
 from datetime import datetime
 
 app = Flask(__name__)
@@ -13,6 +14,11 @@ WEBHOOK_SECRET    = os.environ.get("WEBHOOK_SECRET", "")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ══════════════════════════════════════════
+# Variable global para trackear ultima compra
+# ══════════════════════════════════════════
+ultimo_buy = {}
 
 def enviar_orden(ticker, action, quantity=1):
     url     = f"{ALPACA_BASE_URL}/v2/orders"
@@ -58,6 +64,14 @@ def tiene_posicion(ticker):
     except:
         return False
 
+def comprado_recientemente(ticker, segundos=30):
+    if ticker in ultimo_buy:
+        diferencia = time.time() - ultimo_buy[ticker]
+        if diferencia < segundos:
+            logger.info(f"BUY reciente en {ticker} hace {int(diferencia)}s — asumiendo posicion abierta")
+            return True
+    return False
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     logger.info(f"Webhook recibido: {datetime.now().strftime('%H:%M:%S')}")
@@ -69,7 +83,6 @@ def webhook():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-    # Verificar secret desde el body
     secret = data.get("secret", "")
     if WEBHOOK_SECRET and secret != WEBHOOK_SECRET:
         logger.warning("Clave secreta incorrecta")
@@ -82,16 +95,21 @@ def webhook():
     logger.info(f"Senal: {action.upper()} {quantity} {ticker}")
 
     if action == "buy":
-        if tiene_posicion(ticker):
+        if tiene_posicion(ticker) or comprado_recientemente(ticker):
             logger.info("BUY ignorado — posicion ya abierta")
             return jsonify({"status": "ignored", "reason": "position already open"}), 200
         resultado = enviar_orden(ticker, "buy", quantity)
+        if resultado["success"]:
+            ultimo_buy[ticker] = time.time()  # registrar tiempo del BUY
 
     elif action == "sell":
-        if not tiene_posicion(ticker):
+        # Verificar posicion real O si hubo BUY reciente
+        if not tiene_posicion(ticker) and not comprado_recientemente(ticker):
             logger.info("SELL ignorado — no hay posicion abierta")
             return jsonify({"status": "ignored", "reason": "no open position"}), 200
         resultado = enviar_orden(ticker, "sell", quantity)
+        if resultado["success"]:
+            ultimo_buy.pop(ticker, None)  # limpiar registro del BUY
 
     else:
         return jsonify({"error": f"Accion desconocida: {action}"}), 400
